@@ -1,0 +1,161 @@
+﻿@page "/"
+@page "/CompareWorkbook"
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+@using GroupDocs.Comparison;
+@using IronXL;
+@using System.Data;
+@using IronSoftware.Drawing;
+@using IronXL.Styles;
+@using System.Linq;
+@using Newtonsoft.Json.Linq;
+@using XcelPoc.Data;
+@using Newtonsoft.Json;
+
+<PageTitle>Excel File Viewer</PageTitle>
+@*<img src="/img/logo-trans.png" alt="RTA Logo" width="70px" height="50px" />*@
+<h3 style="align-content:center">MS Excel POC</h3>
+<hr class="dashed">
+
+<div class="center-form">
+
+        <label>Upload File 1</label>
+        <InputFile OnChange="@OpenFirstExcelFileFromDisk" />
+        <br><br>
+
+        <label>Upload File 2</label>
+
+        <InputFile OnChange="@OpenSecondExcelFileFromDisk" />
+        <br><br>
+        <button onclick="@CompareFiles">Compare</button>
+
+</div>
+
+
+<br />
+<br />
+
+<div id="spreadsheet"></div>
+<div id="secondSpreadsheet"></div>
+
+@code {
+
+    #region temp
+    private IJSObjectReference? module;
+    private IJSObjectReference? secondModule;
+    private string? result;
+    private string? secondResult;
+    #endregion
+
+
+    // Create a DataTable
+    WorkSheet firstLoadedWorkSheet;
+    WorkSheet secondLoadedWorkSheet;
+    WorkBook loadedWorkBook;
+
+    public JsSpreadWorksheet firstJsSpreadSheet = new JsSpreadWorksheet();
+    public JsSpreadWorksheet secondJsSpreadSheet = new JsSpreadWorksheet();
+
+    // When a file is uploaded to the App using the InputFile, trigger:
+    async Task OpenFirstExcelFileFromDisk(InputFileChangeEventArgs e)
+    {
+        MemoryStream ms = new MemoryStream();
+
+        await e.File.OpenReadStream().CopyToAsync(ms);
+        ms.Position = 0;
+
+        // Define variables for IronXL
+        loadedWorkBook = WorkBook.FromStream(ms);
+        firstLoadedWorkSheet = loadedWorkBook.DefaultWorkSheet;
+        firstJsSpreadSheet = LoadDataToJsSpreadSheet(firstLoadedWorkSheet);
+    }
+
+    async Task OpenSecondExcelFileFromDisk(InputFileChangeEventArgs e)
+    {
+        MemoryStream ms = new MemoryStream();
+
+        await e.File.OpenReadStream().CopyToAsync(ms);
+        ms.Position = 0;
+
+        // Define variables for IronXL
+        WorkBook loadedWorkBook = WorkBook.FromStream(ms);
+        secondLoadedWorkSheet = loadedWorkBook.DefaultWorkSheet;
+        secondJsSpreadSheet = LoadDataToJsSpreadSheet(secondLoadedWorkSheet);
+    }
+
+    public async Task CompareFiles()
+    {
+        foreach (var row in firstLoadedWorkSheet.Rows.Skip(1))
+        {
+            foreach (var cell in row)
+            {
+                var sameCellValueInSecondWorkBook = secondLoadedWorkSheet[cell.AddressString];
+                if (string.Equals(cell.StringValue, sameCellValueInSecondWorkBook.StringValue))
+                    continue;
+                else
+                {
+                    cell.Style.SetBackgroundColor("#FFFF00");
+                    firstJsSpreadSheet.style.Add(cell.AddressString, "background-color: yellow");
+                    secondJsSpreadSheet.style.Add(cell.AddressString, "background-color: orange");
+                }
+            }
+        }
+        //loadedWorkBook.SaveAs("C:\\Users\\vikas\\Downloads\\result.xlsx");
+        await RenderDifference(true);
+    }
+
+
+
+    public JsSpreadWorksheet LoadDataToJsSpreadSheet(WorkSheet workSheet)
+    {
+        JsSpreadWorksheet jsSpread = new JsSpreadWorksheet();
+        jsSpread.minDimensions.AddRange(new List<int>() { 10, 10 });
+        jsSpread.worksheetName = workSheet.Name;
+        foreach (var row in workSheet.Rows)
+        {
+            List<object> list = new List<object>();
+            foreach (var column in row)
+            {
+                list.Add(column.StringValue);
+
+            }
+            jsSpread.data.Add(list);
+        }
+
+        return jsSpread;
+    }
+
+
+
+    #region jsspreadsheet code
+    protected async Task RenderDifference(bool firstRender)
+    {
+        if (firstRender)
+        {
+            module = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./jspreadsheet.js");
+            if (module != null)
+            {
+                result = await module.InvokeAsync<string>("load_spreadsheet", firstJsSpreadSheet);
+            }
+            secondModule = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./jspreadsheet.js");
+            if (secondModule != null)
+            {
+                secondResult = await secondModule.InvokeAsync<string>("load_secondSpreadsheet", secondJsSpreadSheet);
+            }
+        }
+    }
+    async ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        if (module is not null)
+        {
+            await module.DisposeAsync();
+        }
+        if (secondModule is not null)
+        {
+            await secondModule.DisposeAsync();
+        }
+
+    }
+    #endregion
+}
+
